@@ -1,0 +1,857 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Product Graph Editor</title>
+    <style>
+        /* Add these styles for the resizable container */
+        body {
+            margin: 0;
+            padding: 0;
+            font-family: Arial, sans-serif;
+        }
+        
+        .toolbar {
+            padding: 10px;
+            background-color: #f5f5f5;
+            border-bottom: 1px solid #ddd;
+        }
+        
+        .container {
+            display: flex;
+            height: calc(100vh - 60px);
+            overflow: hidden;
+        }
+        
+        .panel {
+            overflow: auto;
+            padding: 10px;
+        }
+        
+        .panel-title {
+            font-weight: bold;
+            margin-bottom: 8px;
+        }
+        
+        #editor {
+            width: 100%;
+            height: calc(100% - 30px);
+            border: 1px solid #ccc;
+            padding: 8px;
+            font-family: monospace;
+            white-space: pre;
+            overflow: auto;
+            tab-size: 2;
+        }
+        
+        #preview {
+            width: 100%;
+            height: calc(100% - 30px);
+            border: 1px solid #ccc;
+            position: relative;
+        }
+        
+        /* Styles for the resizer */
+        .resizer {
+            width: 8px;
+            background-color: #ddd;
+            cursor: col-resize;
+            transition: background-color 0.2s;
+            user-select: none;
+        }
+        
+        .resizer:hover,
+        .resizer.active {
+            background-color: #bbb;
+        }
+        
+        /* Description tooltip styles */
+        .description-tooltip {
+            position: absolute;
+            background-color: white;
+            border: 1px solid #ccc;
+            border-radius: 4px;
+            padding: 10px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
+            max-width: 300px;
+            z-index: 1000;
+            pointer-events: none;
+            transition: opacity 0.2s;
+        }
+        
+        .description-title {
+            font-weight: bold;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        
+        .description-content {
+            color: #555;
+        }
+        
+        /* Markdown styling */
+        .description-content h1, .description-content h2, .description-content h3 {
+            margin-top: 0.5em;
+            margin-bottom: 0.3em;
+        }
+        
+        .description-content p {
+            margin: 0.5em 0;
+        }
+        
+        .description-content ul, .description-content ol {
+            margin: 0.5em 0;
+            padding-left: 1.5em;
+        }
+        
+        .description-content code {
+            background-color: #f5f5f5;
+            padding: 0.1em 0.3em;
+            border-radius: 3px;
+            font-family: monospace;
+        }
+        
+        .description-content pre {
+            background-color: #f5f5f5;
+            padding: 0.5em;
+            border-radius: 3px;
+            overflow-x: auto;
+        }
+        
+        .description-content blockquote {
+            margin: 0.5em 0;
+            padding-left: 1em;
+            border-left: 3px solid #ddd;
+            color: #666;
+        }
+        
+        .description-content a {
+            color: #0366d6;
+            text-decoration: none;
+        }
+        
+        /* Step marker hover effect */
+        .step-marker:hover {
+            stroke: #333;
+            stroke-width: 2px;
+        }
+        
+        /* Improved node and text styling */
+        .nodes text {
+            font-size: 12px;
+            font-weight: bold;
+        }
+        
+        .step-text {
+            font-size: 11px;
+            font-weight: normal;
+            fill: #333;
+            text-shadow: 0 0 3px white, 0 0 3px white, 0 0 3px white, 0 0 3px white;
+        }
+        
+        /* Rest of your existing styles */
+        .filter-options {
+            margin: 10px 0;
+        }
+        
+        .status {
+            margin-top: 10px;
+            font-style: italic;
+        }
+        
+        .error {
+            color: red;
+            padding: 10px;
+        }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/d3/7.8.5/d3.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+</head>
+<body>
+    <div class="toolbar">
+        <button id="save-btn">Save to Local Storage</button>
+        <button id="load-btn">Load from Local Storage</button>
+        <button id="export-btn">Export to File</button>
+        <button id="import-btn">Import from File</button>
+        <input type="file" id="file-input" style="display: none;">
+        <div class="filter-options">
+            <label><input type="checkbox" id="filter-operator" checked> Operator</label>
+            <label><input type="checkbox" id="filter-machine-comm" checked> Machine Communication</label>
+            <label><input type="checkbox" id="filter-machine-func" checked> Machine Function</label>
+            <button id="toggle-collapse">Toggle Collapse</button>
+        </div>
+        <div class="status" id="status">Ready</div>
+    </div>
+    
+    <div class="container">
+        <div class="panel" id="left-panel">
+            <div class="panel-title">JSON Editor</div>
+            <div id="editor" contenteditable="true"></div>
+        </div>
+        <div class="resizer" id="resizer"></div>
+        <div class="panel" id="right-panel">
+            <div class="panel-title">Graph Visualization</div>
+            <div id="preview"></div>
+        </div>
+    </div>
+
+    <!-- Description tooltip container -->
+    <div id="description-tooltip" class="description-tooltip" style="display: none;">
+        <div class="description-title" id="tooltip-title"></div>
+        <div class="description-content" id="tooltip-content"></div>
+    </div>
+
+    <script>
+        // DOM Elements
+        const editor = document.getElementById('editor');
+        const preview = document.getElementById('preview');
+        const saveBtn = document.getElementById('save-btn');
+        const loadBtn = document.getElementById('load-btn');
+        const exportBtn = document.getElementById('export-btn');
+        const importBtn = document.getElementById('import-btn');
+        const fileInput = document.getElementById('file-input');
+        const status = document.getElementById('status');
+        const filterOperator = document.getElementById('filter-operator');
+        const filterMachineComm = document.getElementById('filter-machine-comm');
+        const filterMachineFunc = document.getElementById('filter-machine-func');
+        const toggleCollapseBtn = document.getElementById('toggle-collapse');
+        
+        // Description tooltip elements
+        const tooltip = document.getElementById('description-tooltip');
+        const tooltipTitle = document.getElementById('tooltip-title');
+        const tooltipContent = document.getElementById('tooltip-content');
+        
+        // Resizer elements
+        const resizer = document.getElementById('resizer');
+        const leftPanel = document.getElementById('left-panel');
+        const rightPanel = document.getElementById('right-panel');
+        const container = document.querySelector('.container');
+
+        // App state
+        const STORAGE_KEY = 'product-graph-editor-content';
+        const PANEL_SIZE_KEY = 'product-graph-editor-panel-size';
+        let collapsed = false;
+        let simulation = null;
+        
+        // Resizer functionality
+        let isResizing = false;
+        let initialX;
+        let initialLeftWidth;
+        
+        // Set up marked.js options
+        marked.setOptions({
+            gfm: true,
+            breaks: true,
+            sanitize: true
+        });
+
+        // Initialize panel sizes (try to get from localStorage or use default 50%)
+        function initPanelSizes() {
+            const savedLeftWidth = localStorage.getItem(PANEL_SIZE_KEY);
+            if (savedLeftWidth) {
+                leftPanel.style.width = savedLeftWidth;
+                rightPanel.style.width = `calc(100% - ${savedLeftWidth} - 8px)`;
+            } else {
+                leftPanel.style.width = '50%';
+                rightPanel.style.width = 'calc(50% - 8px)';
+            }
+        }
+
+        // Resizer event handlers
+        resizer.addEventListener('mousedown', function(e) {
+            isResizing = true;
+            initialX = e.clientX;
+            initialLeftWidth = leftPanel.getBoundingClientRect().width;
+            
+            resizer.classList.add('active');
+            
+            // Prevent text selection during resize
+            document.body.style.userSelect = 'none';
+        });
+
+        document.addEventListener('mousemove', function(e) {
+            if (!isResizing) return;
+            
+            const containerWidth = container.getBoundingClientRect().width;
+            const newLeftWidth = initialLeftWidth + (e.clientX - initialX);
+            
+            // Enforce minimum widths (20% of container)
+            const minWidth = containerWidth * 0.2;
+            if (newLeftWidth < minWidth || newLeftWidth > containerWidth - minWidth - 8) return;
+            
+            const leftWidthPercentage = `${(newLeftWidth / containerWidth) * 100}%`;
+            leftPanel.style.width = leftWidthPercentage;
+            rightPanel.style.width = `calc(100% - ${leftWidthPercentage} - 8px)`;
+            
+            // Save the current panel size to localStorage
+            localStorage.setItem(PANEL_SIZE_KEY, leftWidthPercentage);
+            
+            // If simulation exists, update it to fit the new size
+            if (simulation) {
+                simulation.force('center', d3.forceCenter(
+                    preview.clientWidth / 2, 
+                    preview.clientHeight / 2
+                ));
+                simulation.alpha(0.3).restart();
+            }
+        });
+
+        document.addEventListener('mouseup', function() {
+            if (!isResizing) return;
+            
+            isResizing = false;
+            resizer.classList.remove('active');
+            document.body.style.userSelect = '';
+            
+            // Update preview to fit new size
+            updatePreview();
+        });
+
+        // Show tooltip with description and render markdown
+        function showTooltip(title, description, x, y) {
+            tooltipTitle.textContent = title;
+            
+            // Parse markdown and set HTML content
+            if (description) {
+                tooltipContent.innerHTML = marked.parse(description);
+            } else {
+                tooltipContent.textContent = 'No description available';
+            }
+            
+            tooltip.style.display = 'block';
+            
+            // Position tooltip
+            const tooltipWidth = tooltip.offsetWidth;
+            const tooltipHeight = tooltip.offsetHeight;
+            const previewRect = preview.getBoundingClientRect();
+            
+            // Check if tooltip would go out of bounds
+            let tooltipX = x + 15;
+            let tooltipY = y;
+            
+            if (tooltipX + tooltipWidth > previewRect.right) {
+                tooltipX = x - tooltipWidth - 15;
+            }
+            
+            if (tooltipY + tooltipHeight > previewRect.bottom) {
+                tooltipY = previewRect.bottom - tooltipHeight - 10;
+            }
+            
+            tooltip.style.left = `${tooltipX}px`;
+            tooltip.style.top = `${tooltipY}px`;
+        }
+
+        // Hide tooltip
+        function hideTooltip() {
+            tooltip.style.display = 'none';
+        }
+
+        // Sample JSON data for initial load with markdown descriptions
+        const sampleData = {
+            "products": [
+                {"id": "p1", "name": "Raw Material", "description": "**Unprocessed materials** used in manufacturing\n\n- Often includes metals, chemicals, or organic matter\n- Requires initial handling precautions"},
+                {"id": "p2", "name": "Processed Material", "description": "Materials that have been *initially processed*\n\n1. Primary cutting completed\n2. Initial quality check performed\n3. Ready for component assembly"},
+                {"id": "p3", "name": "Intermediate Component", "description": "## Partially assembled components\n\nThese components have gone through several stages:\n- Initial assembly\n- Quality verification\n- Ready for final integration\n\n> Note: Store in temperature-controlled environment"},
+                {"id": "p4", "name": "Final Product", "description": "# Completed product ready for shipping\n\n```\nShipping Process:\n1. Final QA check\n2. Packaging\n3. Inventory update\n4. Shipping manifest creation\n```\n\n[Internal Link to Shipping Guidelines](#)"}
+            ],
+            "transitions": [
+                {
+                    "source": "p1", 
+                    "target": "p2", 
+                    "description": "## Initial processing of raw materials\n\nThis step transforms **raw materials** into *processed materials* through:\n- Cutting\n- Forming\n- Heat treatment\n- Chemical processing",
+                    "steps": [
+                        {"description": "**Load material** onto conveyor system", "type": "operator"},
+                        {"description": "Send start signal via *control panel*", "type": "machine-communication"},
+                        {"description": "Process material using programmed sequence", "type": "machine-function"}
+                    ]
+                },
+                {
+                    "source": "p2", 
+                    "target": "p3", 
+                    "description": "# Assembly of processed materials\n\n1. Components are gathered\n2. Positioning fixtures are prepared\n3. Assembly sequence begins\n\n> Critical stage requiring precision",
+                    "steps": [
+                        {"description": "Transfer parts to assembly station", "type": "operator"},
+                        {"description": "Configure machine settings for current batch", "type": "machine-communication"},
+                        {"description": "Automated assembly sequence runs", "type": "machine-function"}
+                    ]
+                },
+                {
+                    "source": "p3", 
+                    "target": "p4", 
+                    "description": "Final assembly and packaging\n\n```\nQuality metrics:\n- Dimensional accuracy: ±0.1mm\n- Appearance: No visible defects\n- Functionality: 100% pass rate\n```",
+                    "steps": [
+                        {"description": "Perform visual and functional quality check", "type": "operator"},
+                        {"description": "Update inventory system with completed unit", "type": "machine-communication"},
+                        {"description": "Automated packaging system seals product", "type": "machine-function"}
+                    ]
+                }
+            ]
+        };
+
+        // Initialize editor
+        function init() {
+            initPanelSizes();
+            
+            const savedContent = localStorage.getItem(STORAGE_KEY);
+            if (savedContent) {
+                editor.textContent = savedContent;
+            } else {
+                editor.textContent = JSON.stringify(sampleData, null, 2);
+            }
+            updatePreview();
+        }
+
+        // Update preview with visualization
+        function updatePreview() {
+            try {
+                // Parse JSON
+                const jsonData = JSON.parse(editor.textContent);
+                
+                // Clear previous visualization
+                preview.innerHTML = '';
+                
+                // Create the graph
+                createGraph(jsonData);
+                
+                // Show success status
+                showStatus('Graph updated');
+            } catch (error) {
+                preview.innerHTML = `<div class="error">JSON Error: ${error.message}</div>`;
+                showStatus('JSON parsing error');
+            }
+        }
+
+        // Get filtered transition steps based on current filter settings
+        function getFilteredSteps(steps) {
+            return steps.filter(step => {
+                if (step.type === 'operator' && !filterOperator.checked) return false;
+                if (step.type === 'machine-communication' && !filterMachineComm.checked) return false;
+                if (step.type === 'machine-function' && !filterMachineFunc.checked) return false;
+                return true;
+            });
+        }
+
+        // Create graph visualization using D3.js
+        function createGraph(data) {
+            // SVG setup
+            const width = preview.clientWidth;
+            const height = preview.clientHeight;
+            
+            const svg = d3.select('#preview')
+                .append('svg')
+                .attr('width', '100%')
+                .attr('height', '100%')
+                .attr('viewBox', [0, 0, width, height]);
+            
+            // Define arrow markers for links
+            svg.append("defs").append("marker")
+                .attr("id", "arrowhead")
+                .attr("viewBox", "0 -5 10 10")
+                .attr("refX", 22) // Offset from the end of the line to place the arrowhead
+                .attr("refY", 0)
+                .attr("orient", "auto")
+                .attr("markerWidth", 6)
+                .attr("markerHeight", 6)
+                .attr("xoverflow", "visible")
+                .append("path")
+                .attr("d", "M0,-5L10,0L0,5")
+                .attr("fill", "#999");
+                
+            // Add click event listener to hide tooltip when clicking elsewhere
+            svg.on('click', function(event) {
+                // Only hide if click is directly on SVG, not on a node
+                if (event.target.tagName === 'svg') {
+                    hideTooltip();
+                }
+            });
+            
+            // Create nodes and links arrays for D3
+            const nodes = data.products.map(p => ({...p}));
+            
+            // Find transitions that match source/target IDs
+            const links = data.transitions.map(t => {
+                const filteredSteps = getFilteredSteps(t.steps);
+                return {
+                    source: t.source,
+                    target: t.target,
+                    description: t.description,
+                    steps: filteredSteps,
+                    value: collapsed ? 1 : filteredSteps.length || 1
+                };
+            });
+
+            // Create force simulation with increased distance
+            simulation = d3.forceSimulation(nodes)
+                .force('link', d3.forceLink(links).id(d => d.id)
+                    .distance(d => collapsed ? 180 : 120 + d.value * 50)) // Increased distance
+                .force('charge', d3.forceManyBody().strength(-800)) // Stronger repulsion
+                .force('center', d3.forceCenter(width / 2, height / 2))
+                .on('tick', ticked);
+
+            // Create a group for links
+            const link = svg.append('g')
+                .attr('class', 'links')
+                .selectAll('g')
+                .data(links)
+                .enter()
+                .append('g');
+            
+            // Draw the main link line with arrow marker
+            link.append('path')
+                .attr('stroke', '#999')
+                .attr('stroke-opacity', 0.6)
+                .attr('stroke-width', d => Math.sqrt(d.value) * 2)
+                .attr('fill', 'none')
+                .attr('marker-end', 'url(#arrowhead)')
+                .on('click', function(event, d) {
+                    event.stopPropagation();
+                    // Show transition description
+                    const rect = this.getBoundingClientRect();
+                    const midX = (rect.x + rect.width / 2);
+                    const midY = (rect.y + rect.height / 2);
+                    
+                    // Find source and target nodes
+                    const sourceName = nodes.find(n => n.id === d.source.id).name;
+                    const targetName = nodes.find(n => n.id === d.target.id).name;
+                    const title = `Transition: ${sourceName} → ${targetName}`;
+                    
+                    showTooltip(title, d.description, midX, midY);
+                });
+            
+            // Only show step descriptions if not collapsed
+            if (!collapsed) {
+                link.each(function(d) {
+                    const linkElement = d3.select(this);
+                    
+                    // Create a container for each step
+                    const stepContainers = linkElement.selectAll('.step-container')
+                        .data(d.steps)
+                        .enter()
+                        .append('g')
+                        .attr('class', 'step-container');
+                    
+                    // Add circles for each step
+                    stepContainers.append('circle')
+                        .attr('class', 'step-marker')
+                        .attr('r', 6) // Slightly larger circle
+                        .attr('fill', d => getColorByType(d.type))
+                        .on('click', function(event, d) {
+                            event.stopPropagation();
+                            const rect = this.getBoundingClientRect();
+                            const title = `Step: ${d.type}`;
+                            showTooltip(title, d.description, rect.x, rect.y);
+                        });
+                    
+                    // Add text for each step with improved visibility
+                    stepContainers.append('text')
+                        .attr('class', 'step-text')
+                        .attr('text-anchor', 'middle')
+                        .attr('dy', -10) // Move text up a bit more
+                        .text(d => d.description);
+                });
+            }
+            
+            // Create node elements
+            const node = svg.append('g')
+                .attr('class', 'nodes')
+                .selectAll('g')
+                .data(nodes)
+                .enter()
+                .append('g')
+                .call(d3.drag()
+                    .on('start', dragstarted)
+                    .on('drag', dragged)
+                    .on('end', dragended));
+            
+            // Add circles for nodes (increased size)
+            node.append('circle')
+                .attr('r', 18) // Larger node size
+                .attr('fill', '#4CAF50')
+                .on('click', function(event, d) {
+                    event.stopPropagation();
+                    // Show product description
+                    const rect = this.getBoundingClientRect();
+                    showTooltip(`Product: ${d.name}`, d.description, rect.x, rect.y);
+                });
+            
+            // Add text labels for nodes
+            node.append('text')
+                .attr('dy', 32) // Move text down a bit more
+                .attr('text-anchor', 'middle')
+                .text(d => d.name);
+            
+            // Create a legend
+            const legend = svg.append('g')
+                .attr('class', 'legend')
+                .attr('transform', 'translate(20, 20)');
+            
+            const legendData = [
+                { type: 'operator', color: getColorByType('operator'), label: 'Operator' },
+                { type: 'machine-communication', color: getColorByType('machine-communication'), label: 'Machine Communication' },
+                { type: 'machine-function', color: getColorByType('machine-function'), label: 'Machine Function' }
+            ];
+            
+            const legendItems = legend.selectAll('.legend-item')
+                .data(legendData)
+                .enter()
+                .append('g')
+                .attr('class', 'legend-item')
+                .attr('transform', (d, i) => `translate(0, ${i * 20})`);
+            
+            legendItems.append('circle')
+                .attr('r', 6)
+                .attr('fill', d => d.color);
+            
+            legendItems.append('text')
+                .attr('x', 15)
+                .attr('dy', '0.32em')
+                .text(d => d.label);
+                
+            // Add instructions text
+            svg.append('text')
+                .attr('x', 20)
+                .attr('y', height - 20)
+                .attr('class', 'instructions')
+                .attr('fill', '#555')
+                .text('Click on nodes or connections to view descriptions');
+                
+            // Function to handle ticks of the simulation
+            function ticked() {
+                // Calculate and update path positions for links (curved paths for arrows)
+                link.selectAll('path').attr('d', function(d) {
+                    // Create a curved path
+                    const dx = d.target.x - d.source.x;
+                    const dy = d.target.y - d.source.y;
+                    const dr = Math.sqrt(dx * dx + dy * dy);
+                    
+                    // Straight line for short distances, curved for longer ones
+                    if (dr < 150) {
+                        return `M${d.source.x},${d.source.y}L${d.target.x},${d.target.y}`;
+                    } else {
+                        return `M${d.source.x},${d.source.y}A${dr},${dr} 0 0,1 ${d.target.x},${d.target.y}`;
+                    }
+                });
+                
+                // Update step markers and text positions if not collapsed
+                if (!collapsed) {
+                    link.each(function(d) {
+                        const linkElement = d3.select(this);
+                        
+                        // Get the path element to position steps along it
+                        const path = linkElement.select('path').node();
+                        if (!path) return;
+                        
+                        const pathLength = path.getTotalLength();
+                        
+                        // Only position steps if there's enough space
+                        if (pathLength > 10 && d.steps.length > 0) {
+                            // Select all step containers
+                            linkElement.selectAll('.step-container').each(function(stepData, i) {
+                                const stepContainer = d3.select(this);
+                                const stepFraction = (i + 1) / (d.steps.length + 1);
+                                
+                                // Get point at position along the path
+                                const point = path.getPointAtLength(pathLength * stepFraction);
+                                
+                                // Position the circle
+                                stepContainer.select('circle')
+                                    .attr('cx', point.x)
+                                    .attr('cy', point.y);
+                                
+                                // Position the text with offset for better readability
+                                stepContainer.select('text')
+                                    .attr('x', point.x)
+                                    .attr('y', point.y);
+                            });
+                        }
+                    });
+                }
+                
+                // Update node positions
+                node.attr('transform', d => `translate(${d.x}, ${d.y})`);
+            }
+            
+            // Drag functions
+            function dragstarted(event, d) {
+                if (!event.active) simulation.alphaTarget(0.3).restart();
+                d.fx = d.x;
+                d.fy = d.y;
+            }
+            
+            function dragged(event, d) {
+                d.fx = event.x;
+                d.fy = event.y;
+            }
+            
+            function dragended(event, d) {
+                if (!event.active) simulation.alphaTarget(0);
+                d.fx = null;
+                d.fy = null;
+            }
+        }
+        
+        // Get color based on step type
+        function getColorByType(type) {
+            switch(type) {
+                case 'operator': return '#FF9800';
+                case 'machine-communication': return '#2196F3';
+                case 'machine-function': return '#E91E63';
+                default: return '#999';
+            }
+        }
+
+        // Save content to local storage
+        function saveToLocalStorage() {
+            localStorage.setItem(STORAGE_KEY, editor.textContent);
+            showStatus('Saved to local storage');
+        }
+
+        // Load content from local storage
+        function loadFromLocalStorage() {
+            const savedContent = localStorage.getItem(STORAGE_KEY);
+            if (savedContent) {
+                editor.textContent = savedContent;
+                updatePreview();
+                showStatus('Loaded from local storage');
+            } else {
+                showStatus('No saved content found');
+            }
+        }
+
+        // Export content to a file
+        function exportToFile() {
+            try {
+                // Try to parse and format the JSON before exporting
+                const jsonData = JSON.parse(editor.textContent);
+                const formattedJson = JSON.stringify(jsonData, null, 2);
+                
+                const blob = new Blob([formattedJson], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = 'product-graph.json';
+                a.click();
+                
+                URL.revokeObjectURL(url);
+                showStatus('Exported to file');
+            } catch (error) {
+                showStatus('Error formatting JSON for export');
+            }
+        }
+
+        // Trigger file input click
+        function importFile() {
+            fileInput.click();
+        }
+
+        // Handle file import
+        function handleFileImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+            
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    // Try to parse the JSON to validate it
+                    const jsonData = JSON.parse(e.target.result);
+                    editor.textContent = JSON.stringify(jsonData, null, 2);
+                    updatePreview();
+                    showStatus(`Imported ${file.name}`);
+                } catch (error) {
+                    showStatus(`Error: Invalid JSON in ${file.name}`);
+                }
+            };
+            reader.readAsText(file);
+        }
+
+        // Show status message
+        function showStatus(message) {
+            status.textContent = message;
+            setTimeout(() => {
+                status.textContent = 'Ready';
+            }, 2000);
+        }
+
+        // Toggle collapse state
+        function toggleCollapse() {
+            collapsed = !collapsed;
+            updatePreview();
+            showStatus(collapsed ? 'Graph collapsed' : 'Graph expanded');
+        }
+
+        // Update based on filters
+        function updateFilters() {
+            updatePreview();
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', function() {
+            if (simulation) {
+                simulation.force('center', d3.forceCenter(
+                    preview.clientWidth / 2, 
+                    preview.clientHeight / 2
+                ));
+                simulation.alpha(0.3).restart();
+            }
+            updatePreview();
+        });
+
+        // Utility function for debouncing
+        function debounce(func, wait) {
+            let timeout;
+            return function() {
+                const context = this, args = arguments;
+                clearTimeout(timeout);
+                timeout = setTimeout(() => func.apply(context, args), wait);
+            };
+        }
+
+        // Enable tab key in the editor
+        editor.addEventListener('keydown', function(e) {
+            if (e.key === 'Tab') {
+                e.preventDefault();
+                
+                // Insert tab at cursor position
+                const selection = window.getSelection();
+                const range = selection.getRangeAt(0);
+                
+                const tabNode = document.createTextNode('\t');
+                range.insertNode(tabNode);
+                
+                // Move cursor after the inserted tab
+                range.setStartAfter(tabNode);
+                range.setEndAfter(tabNode);
+                selection.removeAllRanges();
+                selection.addRange(range);
+                
+                // Trigger the input event to update the preview
+                editor.dispatchEvent(new Event('input'));
+            }
+        });
+
+        // Event listeners
+        editor.addEventListener('input', debounce(updatePreview, 500));
+        saveBtn.addEventListener('click', saveToLocalStorage);
+        loadBtn.addEventListener('click', loadFromLocalStorage);
+        exportBtn.addEventListener('click', exportToFile);
+        importBtn.addEventListener('click', importFile);
+        fileInput.addEventListener('change', handleFileImport);
+        filterOperator.addEventListener('change', updateFilters);
+        filterMachineComm.addEventListener('change', updateFilters);
+        filterMachineFunc.addEventListener('change', updateFilters);
+        toggleCollapseBtn.addEventListener('click', toggleCollapse);
+        
+        // Close tooltip when clicking outside the graph
+        document.addEventListener('click', function(event) {
+            if (!preview.contains(event.target) && event.target !== tooltip && !tooltip.contains(event.target)) {
+                hideTooltip();
+            }
+        });
+
+        // Initialize the editor
+        init();
+    </script>
+</body>
+</html>
